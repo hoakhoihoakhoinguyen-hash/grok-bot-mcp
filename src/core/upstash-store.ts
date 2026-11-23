@@ -1,5 +1,12 @@
 import { parseJobRecord } from './job-record';
-import type { CompleteResult, JobRecord, JobStore } from './types';
+import type { CompleteResult, InflightReservation, JobRecord, JobStore } from './types';
+
+const CONSUME_RATE = [
+  "local current = redis.call('INCR', KEYS[1])",
+  'if current == 1 then redis.call(\'EXPIRE\', KEYS[1], ARGV[1]) end',
+  'if current > tonumber(ARGV[2]) then return 0 end',
+  'return 1',
+].join('\n');
 
 /** One round trip. SET runs only while status is pending, and KEEPTTL leaves the original expiry alone. */
 const COMPLETE_IF_PENDING = [
@@ -45,6 +52,49 @@ export class UpstashJobStore implements JobStore {
 
   private key(jobId: string): string {
     return `${this.keyPrefix}${jobId}`;
+  }
+
+  async reserveInflight(caller: string, jobId: string, ttlSeconds: number): Promise<InflightReservation> {
+    const key = `${this.keyPrefix}inflight:${caller}`;
+    const set = await this.command(['SET', key, jobId, 'EX', String(ttlSeconds), 'NX']);
+    if (set === 'OK') return { reserved: true };
+    const existing = await this.command(['GET', key]);
+    return { reserved: false, ...(typeof existing === 'string' ? { jobId: existing } : {}) };
+  }
+
+  async releaseInflight(caller: string, jobId: string): Promise<void> {
+    const key = `${this.keyPrefix}inflight:${caller}`;
+    const existing = await this.command(['GET', key]);
+    if (existing === jobId) await this.command(['DEL', key]);
+  }
+
+  async consumeRate(bucket: string, limit: number, windowSeconds: number): Promise<boolean> {
+    const result = await this.command([
+      'EVAL',
+      CONSUME_RATE,
+      '1',
+      `${this.keyPrefix}rate:${bucket}`,
+      String(windowSeconds),
+      String(limit),
+    ]);
+    return result === 1;
+  }
+
+  async readIdempotency(caller: string, keyHash: string): Promise<string | null> {
+    const result = await this.command(['GET', this.idemKey(caller, keyHash)]);
+    return typeof result === 'string' ? result : null;
+  }
+
+  async writeIdempotency(caller: string, keyHash: string, jobId: string, ttlSeconds: number): Promise<void> {
+    await this.command(['SET', this.idemKey(caller, keyHash), jobId, 'EX', String(ttlSeconds)]);
+  }
+
+  async deleteIdempotency(caller: string, keyHash: string): Promise<void> {
+    await this.command(['DEL', this.idemKey(caller, keyHash)]);
+  }
+
+  private idemKey(caller: string, keyHash: string): string {
+    return `${this.keyPrefix}idem:${caller}:${keyHash}`;
   }
 
   private async command(args: string[]): Promise<unknown> {

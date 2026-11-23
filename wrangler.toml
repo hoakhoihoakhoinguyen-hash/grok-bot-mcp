@@ -11,6 +11,6 @@ id = "00000000000000000000000000000000"
 
 [vars]
 # Non-secret defaults. Put real values in `wrangler secret` (see README).
-WAIT_SECONDS = "25"
-JOB_TTL_SECONDS = "86400"
+WAIT_SECONDS = "0"
+JOB_TTL_SECONDS = "900"
 MAX_MESSAGE_BYTES = "16384"

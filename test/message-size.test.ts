@@ -13,7 +13,7 @@ describe('message size', () => {
     const message = 'a'.repeat(16 * 1024 + 1);
     const asked = await callTool(app, 'ask_bot', { message });
     expect(asked.rpc.result?.isError).toBe(true);
-    expect(toolText(asked.rpc)).toContain('16384');
+    expect(toolText(asked.rpc)).toBe('message_too_large');
     expect(calls).toBe(0);
     expect(asked.text).not.toContain(message);
   });

@@ -3,7 +3,6 @@ export interface WebhookPayload {
   thread_id: string | null;
   caller: string;
   message: string;
-  reply_url: string;
 }
 
 export type WebhookResult = { ok: true } | { ok: false; status?: number; reason: 'status' | 'timeout' | 'network' };

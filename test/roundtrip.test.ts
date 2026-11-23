@@ -43,12 +43,15 @@ describe('ask_bot round trip', () => {
     expect(call?.headers.get('authorization')).toBe(`Bearer ${WEBHOOK_KEY}`);
     expect(call?.headers.get('x-automation-key')).toBe(WEBHOOK_KEY);
     expect(call?.headers.get('content-type')).toBe('application/json');
-    expect(call?.body).toMatchObject({
+    expect(call?.body).toEqual({
+      job_id: call?.body.job_id,
       thread_id: 'thread-1',
       caller: 'claude',
       message: 'Reply with pong',
-      reply_url: 'https://mcp.example/api/reply',
     });
+    expect(call?.body).not.toHaveProperty('reply_url');
+    expect(JSON.stringify(call?.body)).not.toContain(REPLY_SECRET);
+    expect(JSON.stringify(call?.body)).not.toContain(WEBHOOK_KEY);
 
     const jobId = String(asked.rpc.result?.structuredContent?.job_id);
     const again = await callTool(app, 'get_reply', { job_id: jobId });
@@ -146,7 +149,8 @@ describe('webhook failures', () => {
     const asked = await callTool(app, 'ask_bot', { message: 'hi' });
     expect(calls).toBe(1);
     expect(asked.rpc.result?.isError).toBe(true);
-    expect(toolText(asked.rpc)).toContain('HTTP 503');
+    expect(toolText(asked.rpc)).toBe('webhook_failed');
+    expect(asked.text).not.toContain('503');
   });
 
   it('does not follow redirects', async () => {
@@ -160,7 +164,8 @@ describe('webhook failures', () => {
     const asked = await callTool(app, 'ask_bot', { message: 'hi' });
     expect(calls).toBe(1);
     expect(asked.rpc.result?.isError).toBe(true);
-    expect(toolText(asked.rpc)).toContain('HTTP 302');
+    expect(toolText(asked.rpc)).toBe('webhook_failed');
+    expect(asked.text).not.toContain('evil.example');
   });
 
   it('reports a timeout after one attempt', async () => {
@@ -181,7 +186,7 @@ describe('webhook failures', () => {
     const asked = await callTool(app, 'ask_bot', { message: 'hi' });
     expect(calls).toBe(1);
     expect(asked.rpc.result?.isError).toBe(true);
-    expect(toolText(asked.rpc)).toContain('timed out');
+    expect(toolText(asked.rpc)).toBe('webhook_failed');
   });
 });
 

@@ -1,7 +1,10 @@
+import { readFileSync, statSync } from 'node:fs';
+
 const HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
-export function validateBridgeUrl(value) {
+export function validateBridgeUrl(value, expectedPath = '/api/mcp') {
   if (typeof value !== 'string' || value.length === 0 || value.length > 300) return { ok: false };
+  if (expectedPath !== '/api/mcp' && expectedPath !== '/api/reply-mcp') return { ok: false };
   let url;
   try {
     url = new URL(value);
@@ -11,7 +14,7 @@ export function validateBridgeUrl(value) {
   if (url.protocol !== 'https:') return { ok: false };
   if (url.username || url.password || url.search || url.hash) return { ok: false };
   if (url.port && url.port !== '443') return { ok: false };
-  if (url.pathname !== '/api/mcp') return { ok: false };
+  if (url.pathname !== expectedPath) return { ok: false };
   const host = url.hostname.toLowerCase().replace(/\.$/, '');
   if (!HOSTNAME.test(host) || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
     return { ok: false };
@@ -87,4 +90,73 @@ export async function forwardRpc({ fetchImpl, url, secret, timeoutMs, message })
   } catch {
     return { ok: false, reason: 'invalid_response' };
   }
+}
+
+export function readPrivateSecretFile(filePath) {
+  if (typeof filePath !== 'string' || filePath.length === 0 || filePath.length > 4096 || filePath.includes('\0')) {
+    return { ok: false, reason: 'secret_file_invalid' };
+  }
+  if (!filePath.startsWith('/')) return { ok: false, reason: 'secret_file_invalid' };
+  let stat;
+  try {
+    stat = statSync(filePath);
+  } catch {
+    return { ok: false, reason: 'secret_file_invalid' };
+  }
+  if (!stat.isFile() || (stat.mode & 0o077) !== 0) return { ok: false, reason: 'secret_file_not_private' };
+  if (stat.size < 16 || stat.size > 4096) return { ok: false, reason: 'secret_file_invalid' };
+  let text;
+  try {
+    text = readFileSync(filePath, 'utf8');
+  } catch {
+    return { ok: false, reason: 'secret_file_invalid' };
+  }
+  const secret = text.trim();
+  if (secret.length < 16 || /[\r\n]/.test(secret)) return { ok: false, reason: 'secret_file_invalid' };
+  return { ok: true, secret };
+}
+
+export function startStdioPump({ url, secret, fetchImpl = fetch, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr }) {
+  let pending = Buffer.alloc(0);
+  let draining = false;
+  async function drain() {
+    if (draining) return;
+    draining = true;
+    try {
+      while (pending.length > 0) {
+        const frame = takeFrame(pending);
+        if (!frame) return;
+        if ('error' in frame) {
+          stderr.write('{"event":"bridge_frame_invalid"}\n');
+          process.exit(1);
+        }
+        pending = frame.rest;
+        try {
+          const forwarded = await forwardRpc({
+            fetchImpl,
+            url,
+            secret,
+            timeoutMs: 30_000,
+            message: frame.message,
+          });
+          const payload = forwarded.ok
+            ? forwarded.message
+            : { jsonrpc: '2.0', id: frame.message.id ?? null, error: { code: -32000, message: 'bridge_failed' } };
+          stdout.write(encodeFrame(payload));
+        } catch {
+          stderr.write('{"event":"bridge_forward_failed"}\n');
+          stdout.write(
+            encodeFrame({ jsonrpc: '2.0', id: frame.message.id ?? null, error: { code: -32000, message: 'bridge_failed' } }),
+          );
+        }
+      }
+    } finally {
+      draining = false;
+      if (takeFrame(pending)) void drain();
+    }
+  }
+  stdin.on('data', (chunk) => {
+    pending = Buffer.concat([pending, chunk]);
+    void drain();
+  });
 }

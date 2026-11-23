@@ -19,6 +19,8 @@ const COMPLETE_IF_PENDING = [
 ].join('\n');
 
 export class UpstashJobStore implements JobStore {
+  readonly safety = 'atomic' as const;
+
   constructor(
     private readonly url: string,
     private readonly token: string,

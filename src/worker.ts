@@ -31,6 +31,7 @@ function appFor(env: WorkerEnv): App {
     config: runtime.config,
     store: runtime.selection.store,
     log: runtime.log,
+    runtime: 'live',
   });
   cached = { fingerprint, app };
   return app;

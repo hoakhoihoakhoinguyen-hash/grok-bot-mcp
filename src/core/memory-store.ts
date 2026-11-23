@@ -12,6 +12,7 @@ interface Counter {
 }
 
 export class MemoryJobStore implements JobStore {
+  readonly safety = 'process' as const;
   private readonly jobs = new Map<string, Entry>();
   private readonly inflight = new Map<string, { jobId: string; expiresAt: number }>();
   private readonly rates = new Map<string, Counter>();

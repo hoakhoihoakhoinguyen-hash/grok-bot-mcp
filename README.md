@@ -20,16 +20,20 @@ Three different secrets, each used in one place:
 | Secret | Who sends it | What it can do |
 | --- | --- | --- |
 | `MCP_API_KEY` caller half | Desktop stdio bridge, as `Authorization: Bearer` | `ping`, `ask_bot`, `get_reply` |
-| `REPLY_SECRET` | Grok's reply connector, as a static header on that connector | `submit_reply` only |
+| `REPLY_SECRET` | Reply stdio process, read from a mode `0600` file | `submit_reply` only |
 | `GROK_BOT_WEBHOOK_KEY` | This server, to the webhook URL you copied | Wake the routine. HTTP 200 is not the answer |
 
-The reply secret is never written into the routine instruction, the webhook body, a tool argument, or a chat message. The verified way to attach it is `AddMcpServer` with a remote HTTPS URL and a static headers object. That addition needs a separate confirmation widget. Opaque `${...}` interpolation in headers or env was not verified, so do not use a placeholder and expect it to become the secret. Typing the secret into the confirmation widget is the step that supplies it. A script-only secret request exposes `process.env.NAME` to that script; inheritance of that env into a later `AddMcpServer` stdio process was not verified, so the reply path does not use stdio on the bot.
+The reply secret is never written into the routine instruction, the webhook body, a tool argument, a chat message, or an `AddMcpServer` argument. `AddMcpServer` accepts header strings, and adding a server requires a separate confirmation widget. That widget is an account-change confirmation. It is not a documented secret-entry form, and this repository does not treat it as one. Opaque header or env interpolation is not verified, and env inheritance into an `AddMcpServer` process is not verified.
+
+The reply path that avoids those gaps is `src/reply-stdio.mjs` on the bot computer. Its arguments are the fixed `https` URL and the path of a secret file. The path is not a secret. The process reads the file only when its mode has no group or other permission bits, then sends `Authorization: Bearer` on outbound calls to `/api/reply-mcp`. It does not listen, and it does not follow redirects.
 
 The caller secret is read by the Desktop bridge from `MCP_CALLER_SECRET` in the environment of that process. Put it in the Desktop config on the Windows machine. The bridge sends it only to the configured `https://.../api/mcp` URL and does not follow redirects.
 
 The webhook sender key is copied by the user from the routine panel's `key` field, not from the prebuilt header field, and only into the host's secret store.
 
-A caller key cannot submit a reply. The reply secret cannot ask the bot. A second question for the same caller is refused while one job is in flight. Each caller gets 6 asks and 12 reads per 10 minutes. The reply connector gets 6 submits per 10 minutes. These caps are constants, not settings that can be raised. Reusing an `idempotency_key` returns the same job and does not wake the bot again. Jobs last 15 minutes by default and at most 1 hour. `ask_bot` waits 0 seconds by default and at most 5.
+A caller key cannot submit a reply. The reply secret cannot ask the bot. Those limits are enforced only on an atomic store, or on the single local dev process. A live Worker or Vercel process whose store is Workers KV or process memory refuses `ask_bot`, `get_reply`, and `submit_reply` with `store_not_atomic` and does not call the webhook. Workers KV has no compare-and-swap; Cloudflare documents that concurrent writes to one key overwrite each other. The caps below are therefore not claimed for KV.
+
+On an atomic store, or in one local process: one in-flight job per caller, 6 asks and 12 reads and 6 submits per 10 minutes, one winner for two overlapping replies, and one webhook for overlapping asks or a repeated idempotency key. Jobs last 15 minutes by default and at most 1 hour. `ask_bot` waits 0 seconds by default and at most 5.
 
 `WEBHOOK_HOST_ALLOWLIST` is the exact hostname of the webhook URL. The server calls only `https` port 443 on that host, with no userinfo, query, or private address. This blocks a caller-supplied callback; the webhook URL is operator configuration, not model output.
 
@@ -88,21 +92,40 @@ In one chat, approve one `ask_bot`. If the text is `pending`, approve one `get_r
 
 Cloudflare Workers Free is the zero-charge host named by Cloudflare's pricing page: $0 per month, 100,000 requests per day, 10 ms CPU per invocation, with Workers KV included at 100,000 reads, 1,000 writes, and 1 GB per day. Exceeding a free quota fails that operation; it does not start the $5 paid plan by itself. One question is a few reads and about two writes. No inbound port is opened on a personal computer. `workers.dev` serves HTTPS on port 443.
 
-Set `WAIT_SECONDS=0`. KV is eventually consistent: a reply written in one location can take up to about 60 seconds to be visible in another, so `get_reply` may need one later call. KV inflight and rate keys are not a compare-and-set. Upstash is atomic, and this server rejects non-public Upstash URLs, but the minimal plan does not require a second vendor.
+Set `WAIT_SECONDS=0`. A live deployment must set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Upstash documents a free Redis database at $0 per month, 250 MB, 500,000 commands per month, and no credit card: [Upstash Redis billing](https://upstash.com/docs/redis/overall/billing). This repository does not create that database. `SET NX` and `EVAL` on that API are the tested atomic path. The server rejects non-public REST URLs.
 
-Before a real install, the operator replaces the KV namespace id in `wrangler.toml`, then types these secrets into `wrangler secret put` locally: `GROK_BOT_WEBHOOK_URL`, `GROK_BOT_WEBHOOK_KEY`, `REPLY_SECRET`, `MCP_API_KEY`, `PUBLIC_BASE_URL`, `WEBHOOK_HOST_ALLOWLIST`. `MCP_API_KEY` is `desktop:<long caller secret>`. `PUBLIC_BASE_URL` is `https://<name>.workers.dev` with no path. `WEBHOOK_HOST_ALLOWLIST` is only the hostname from the webhook URL.
+Workers KV remains in the Wrangler file as an optional binding. With only that binding, the Worker starts and then fails closed. Cloudflare's Durable Objects pricing says SQLite-backed Durable Objects are available on the Workers Free plan and fail the operation when a free quota is exceeded, rather than starting the $5 plan: [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/). This repository does not ship a Durable Object, and that runtime was not executed here.
+
+Before a real install, the operator types these secrets into `wrangler secret put` locally: `GROK_BOT_WEBHOOK_URL`, `GROK_BOT_WEBHOOK_KEY`, `REPLY_SECRET`, `MCP_API_KEY`, `PUBLIC_BASE_URL`, `WEBHOOK_HOST_ALLOWLIST`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`. `MCP_API_KEY` is `desktop:<long caller secret>`. `PUBLIC_BASE_URL` is `https://<name>.workers.dev` with no path. `WEBHOOK_HOST_ALLOWLIST` is only the hostname from the webhook URL. `REPLY_SECRET` on the Worker is the same value the reply adapter reads from its file. Neither value belongs in the routine.
 
 Validation in this repo used `pnpm install --ignore-scripts` so dependency lifecycle scripts did not run. A later `wrangler deploy` needs the operator's own install choice; this tree was not deployed.
 
-## Grok connector
+## Reply adapter
 
-After the host is up, add a remote MCP server for the bot:
+The parent creates the secret file from an environment variable that a secure secret request already put in the shell. The command does not print the value:
 
-- URL: `https://<name>.workers.dev/api/reply-mcp`
-- Static header name: `Authorization`
-- Static header value: `Bearer`, a space, then the reply secret typed into the confirmation widget
+```sh
+umask 077
+printf '%s' "$REPLY_SECRET" > "$HOME/.grok-bot-reply-secret"
+chmod 600 "$HOME/.grok-bot-reply-secret"
+unset REPLY_SECRET
+```
 
-Confirm the widget before the connector exists. Do not put the reply secret in the routine. Do not point this connector at `/api/mcp`. The sender key still goes only from the routine panel into `GROK_BOT_WEBHOOK_KEY`.
+`AddMcpServer` then gets a local stdio command. The arguments contain the URL and the file path, not the secret:
+
+```text
+node /absolute/path/to/src/reply-stdio.mjs --url https://YOUR_WORKER.workers.dev/api/reply-mcp --secret-file /absolute/path/.grok-bot-reply-secret
+```
+
+Adding that server still requires the separate `AddMcpServer` confirmation widget. Preparing this repository does not confirm it. Do not put the reply secret in the routine, in header strings, or in the command arguments. Do not point the adapter at `/api/mcp`. The sender key still goes only from the routine panel into `GROK_BOT_WEBHOOK_KEY`.
+
+SHA256 of the adapter files in this tree:
+
+```text
+dd9d7e83cf88704119f49a5cbeef759c0d6190ecb80803051b860f0f80b909a9  src/reply-stdio.mjs
+fa2f612baac5fa0d558ba92ef9ee457ba1ebdcfac6d6952fc8269a12bb68e574  src/stdio-bridge.mjs
+392a4a71153c874e1ed368fa9fb487475dd57ccf2be9eda9432a9a95d5514f71  src/stdio-bridge-lib.mjs
+```
 
 The server cannot remove other tools already available to 道蕴. Grok's own documentation says bots on one account share a cloud computer, and that separate bots are not a security boundary. Keep Auto Review on, and keep delete, send, and purchase actions on Ask first. This bridge's reply tool only stores text for one existing job.
 

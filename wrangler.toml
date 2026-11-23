@@ -2,9 +2,11 @@ name = "grok-bot-mcp"
 main = "src/worker.ts"
 compatibility_date = "2026-10-01"
 
-# Create the namespace with `wrangler kv namespace create JOBS` and replace this id.
-# Optional when UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are set;
-# Upstash is preferred when those variables exist because reads are consistent.
+# Optional. Workers KV is not atomic. A Worker with only this binding
+# refuses ask and reply until Upstash REST credentials are set.
+# Create the namespace with `wrangler kv namespace create JOBS` and replace this id
+# only if you still want the binding present. Upstash wins when its REST
+# credentials exist.
 [[kv_namespaces]]
 binding = "JOBS"
 id = "00000000000000000000000000000000"

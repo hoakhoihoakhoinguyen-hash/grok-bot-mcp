@@ -159,7 +159,7 @@ function textForJob(job: PublicJob): string {
     case 'pending':
       return job.error === 'inflight' ? `inflight ${job.job_id}` : `pending ${job.job_id}`;
     case 'not_found':
-      return job.error === 'rate_limited' ? 'rate_limited' : 'not_found';
+      return job.error === 'rate_limited' || job.error === 'store_not_atomic' ? job.error : 'not_found';
     default: {
       const _never: never = job.status;
       return _never;

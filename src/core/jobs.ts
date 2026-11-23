@@ -1,6 +1,7 @@
 import { ASK_ATTEMPT_LIMIT, ASK_WINDOW_SECONDS, MAX_REPLY_BYTES, MAX_THREAD_ID_CHARS, READ_ATTEMPT_LIMIT, READ_WINDOW_SECONDS } from './constants';
 import { isJobId, utf8ByteLength } from './http';
 import type { AppDeps, JobRecord, JobStatus } from './types';
+import { mutationsAllowed } from './store-factory';
 import { validateAllowlistedHttps } from './url-policy';
 import { postWebhook } from './webhook';
 
@@ -29,6 +30,11 @@ export async function askBot(
   }
   if (input.idempotencyKey !== undefined && !IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
     return { kind: 'tool_error', message: 'idempotency_invalid' };
+  }
+
+  if (!mutationsAllowed(deps.store, deps.runtime)) {
+    deps.log?.('store_rejected', { caller: input.caller, store: deps.store.safety });
+    return { kind: 'tool_error', message: 'store_not_atomic' };
   }
 
   const missing = missingAskConfig(deps);
@@ -100,6 +106,10 @@ export async function askBot(
 }
 
 export async function getReply(deps: AppDeps, jobId: string, caller: string): Promise<PublicJob> {
+  if (!mutationsAllowed(deps.store, deps.runtime)) {
+    deps.log?.('store_rejected', { caller, store: deps.store.safety });
+    return { job_id: jobId, status: 'not_found', error: 'store_not_atomic' };
+  }
   const allowed = await deps.store.consumeRate(`read:${caller}`, READ_ATTEMPT_LIMIT, READ_WINDOW_SECONDS);
   if (!allowed) {
     deps.log?.('rate_limited', { caller });

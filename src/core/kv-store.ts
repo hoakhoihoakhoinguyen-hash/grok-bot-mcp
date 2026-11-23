@@ -9,6 +9,8 @@ export interface KvBinding {
 }
 
 export class KvJobStore implements JobStore {
+  readonly safety = 'unsafe' as const;
+
   constructor(
     private readonly kv: KvBinding,
     private readonly now: () => number = () => Date.now(),

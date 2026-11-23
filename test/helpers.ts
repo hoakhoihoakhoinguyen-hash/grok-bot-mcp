@@ -5,7 +5,7 @@ import { createApp, type App } from '../src/core/app';
 import { configFromEnv, type EnvMap } from '../src/core/config';
 import { createLogger } from '../src/core/log';
 import { MemoryJobStore } from '../src/core/memory-store';
-import type { AppConfig, AppDeps, LogFn } from '../src/core/types';
+import type { AppConfig, AppDeps, JobStore, LogFn, RuntimeMode } from '../src/core/types';
 
 export const CLAUDE_SECRET = 'claude-test-secret';
 export const CURSOR_SECRET = 'cursor-test-secret';
@@ -15,7 +15,7 @@ export const WEBHOOK_URL = 'https://bot.example/webhook';
 
 export interface TestApp {
   app: App;
-  store: MemoryJobStore;
+  store: JobStore;
   logs: string[];
   log: LogFn;
   config: AppConfig;
@@ -28,9 +28,11 @@ export function testApp(options?: {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   config?: Partial<AppConfig>;
+  store?: JobStore;
+  runtime?: RuntimeMode;
 }): TestApp {
   const now = options?.now ?? (() => Date.now());
-  const store = new MemoryJobStore(now);
+  const store = options?.store ?? new MemoryJobStore(now);
   const logs: string[] = [];
   const log = createLogger((line) => {
     logs.push(line);
@@ -51,6 +53,7 @@ export function testApp(options?: {
   const deps: AppDeps = {
     config,
     store,
+    runtime: options?.runtime,
     fetchImpl: options?.fetchImpl,
     now,
     sleep: options?.sleep,

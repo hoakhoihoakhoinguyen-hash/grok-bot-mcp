@@ -2,6 +2,7 @@ import { matchApiKey, readBearer, timingSafeEqual } from './auth';
 import { MAX_REPLY_BODY_BYTES, SUBMIT_ATTEMPT_LIMIT, SUBMIT_WINDOW_SECONDS } from './constants';
 import { json, unauthorized } from './http';
 import { parseReplyBody, type ReplyUpdate } from './jobs';
+import { mutationsAllowed } from './store-factory';
 import type { AppDeps, CompleteResult, JobRecord } from './types';
 
 export async function handleReply(request: Request, deps: AppDeps): Promise<Response> {
@@ -41,6 +42,8 @@ export async function handleReply(request: Request, deps: AppDeps): Promise<Resp
       return json({ error: 'already_completed' }, 409);
     case 'rate_limited':
       return json({ error: 'rate_limited' }, 429);
+    case 'not_atomic':
+      return json({ error: 'store_not_atomic' }, 503);
     default: {
       const _never: never = result;
       return _never;
@@ -52,7 +55,11 @@ export async function applyReply(
   deps: AppDeps,
   update: ReplyUpdate,
   bytes: number,
-): Promise<CompleteResult | 'rate_limited'> {
+): Promise<CompleteResult | 'rate_limited' | 'not_atomic'> {
+  if (!mutationsAllowed(deps.store, deps.runtime)) {
+    deps.log?.('store_rejected', { caller: 'reply', store: deps.store.safety });
+    return 'not_atomic';
+  }
   const allowed = await deps.store.consumeRate('submit', SUBMIT_ATTEMPT_LIMIT, SUBMIT_WINDOW_SECONDS);
   if (!allowed) {
     deps.log?.('rate_limited', { caller: 'reply' });

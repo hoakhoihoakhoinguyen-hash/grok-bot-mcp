@@ -10,9 +10,15 @@ export interface JobRecord {
 
 export type CompleteResult = 'updated' | 'missing' | 'not_pending';
 
+/** `atomic` is safe across processes. `process` is safe inside one local process. `unsafe` must not take mutations. */
+export type StoreSafety = 'atomic' | 'process' | 'unsafe';
+
+export type RuntimeMode = 'local' | 'live';
+
 export type InflightReservation = { reserved: true } | { reserved: false; jobId?: string };
 
 export interface JobStore {
+  readonly safety: StoreSafety;
   create(jobId: string, job: JobRecord, ttlSeconds: number): Promise<boolean>;
   get(jobId: string): Promise<JobRecord | null>;
   complete(jobId: string, job: JobRecord, ttlSeconds: number): Promise<CompleteResult>;
@@ -50,6 +56,8 @@ export type LogFn = (event: string, fields: LogFields) => void;
 export interface AppDeps {
   config: AppConfig;
   store: JobStore;
+  /** Live runtimes reject every store that is not atomic. */
+  runtime?: RuntimeMode;
   fetchImpl?: typeof fetch;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;

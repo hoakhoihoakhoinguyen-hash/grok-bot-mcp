@@ -1,7 +1,7 @@
 import { json, withNoStore } from './http';
 import { SERVER_NAME } from './constants';
 import { createMcp } from './mcp';
-import { handleMcpAuth, handleReply } from './reply';
+import { handleMcpAuth, handleReply, handleReplyMcpAuth } from './reply';
 import type { AppDeps } from './types';
 
 export interface App {
@@ -10,7 +10,8 @@ export interface App {
 }
 
 export function createApp(deps: AppDeps): App {
-  const mcp = createMcp(deps);
+  const askMcp = createMcp(deps, 'ask');
+  const replyMcp = createMcp(deps, 'reply');
 
   return {
     async fetch(request: Request): Promise<Response> {
@@ -19,7 +20,9 @@ export function createApp(deps: AppDeps): App {
 
       switch (path) {
         case '/api/mcp':
-          return serveMcp(request, deps, mcp);
+          return serveMcp(request, deps, askMcp);
+        case '/api/reply-mcp':
+          return serveReplyMcp(request, deps, replyMcp);
         case '/api/reply':
           return handleReply(request, deps);
         case '/':
@@ -28,7 +31,10 @@ export function createApp(deps: AppDeps): App {
           return json({ error: 'not_found' }, 404);
       }
     },
-    close: () => mcp.close(),
+    close: async () => {
+      await askMcp.close();
+      await replyMcp.close();
+    },
   };
 }
 
@@ -49,13 +55,30 @@ async function serveMcp(
   return withNoStore(response);
 }
 
+async function serveReplyMcp(
+  request: Request,
+  deps: AppDeps,
+  mcp: ReturnType<typeof createMcp>,
+): Promise<Response> {
+  if (request.method !== 'POST' && request.method !== 'GET' && request.method !== 'DELETE') {
+    return json({ error: 'method_not_allowed' }, 405);
+  }
+  const allowed = await handleReplyMcpAuth(request, deps);
+  if (allowed instanceof Response) return allowed;
+  deps.log?.('mcp_request', { method: request.method, caller: 'reply' });
+  const response = await mcp.fetch(request, {
+    authInfo: { token: '', clientId: 'reply', scopes: ['reply'] },
+  });
+  return withNoStore(response);
+}
+
 function serveRoot(request: Request): Response {
   if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
   return json({
     name: SERVER_NAME,
     ok: true,
     mcp: '/api/mcp',
-    reply: '/api/reply',
+    reply_mcp: '/api/reply-mcp',
   });
 }
 

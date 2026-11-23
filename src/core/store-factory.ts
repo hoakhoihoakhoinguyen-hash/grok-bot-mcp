@@ -2,7 +2,7 @@ import { readUpstash, type EnvMap } from './config';
 import { KvJobStore, type KvBinding } from './kv-store';
 import { MemoryJobStore } from './memory-store';
 import { UpstashJobStore } from './upstash-store';
-import type { JobStore } from './types';
+import type { JobStore, RuntimeMode } from './types';
 
 export type StoreKind = 'upstash' | 'kv' | 'memory';
 
@@ -27,4 +27,9 @@ export function createStore(
     return { kind: 'kv', store: new KvJobStore(options.kv, now) };
   }
   return { kind: 'memory', store: new MemoryJobStore(now) };
+}
+
+export function mutationsAllowed(store: JobStore, runtime: RuntimeMode | undefined): boolean {
+  if (store.safety === 'atomic') return true;
+  return store.safety === 'process' && (runtime ?? 'local') === 'local';
 }

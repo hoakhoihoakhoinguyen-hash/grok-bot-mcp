@@ -60,8 +60,8 @@ describe('UpstashJobStore', () => {
     expect(await store.create(jobId, job(), 90)).toBe(true);
     const deps = {
       config: configFromEnv({
-        REPLY_SECRET: 'reply-secret',
-        MCP_API_KEY: 'caller:secret',
+        REPLY_SECRET: 'reply-secret-value',
+        MCP_API_KEY: 'caller:caller-secret-value',
         PUBLIC_BASE_URL: 'https://mcp.example',
       }),
       store,
@@ -75,7 +75,9 @@ describe('UpstashJobStore', () => {
     expect(second.status).toBe(409);
     expect(await second.json()).toEqual({ error: 'already_completed' });
     expect(await store.get(jobId)).toMatchObject({ status: 'done', reply: 'first' });
-    expect(redis.commands.filter((command) => command[0] === 'EVAL')).toHaveLength(2);
+    expect(
+      redis.commands.filter((command) => command[0] === 'EVAL' && String(command[1]).includes('KEEPTTL')),
+    ).toHaveLength(2);
   });
 
   it('prefers Upstash env names, then Vercel KV names', () => {
@@ -117,6 +119,7 @@ interface FakeRedis {
 function fakeRedis(): FakeRedis {
   const saved = new Map<string, string>();
   const ttls = new Map<string, number>();
+  const counts = new Map<string, number>();
   const commands: string[][] = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     const command = JSON.parse(String(init?.body)) as string[];
@@ -140,7 +143,14 @@ function fakeRedis(): FakeRedis {
     }
     if (op === 'GET') return Response.json({ result: saved.get(command[1] ?? '') ?? null });
     if (op === 'EVAL') {
+      const script = command[1] ?? '';
       const key = command[3] ?? '';
+      if (script.includes('INCR')) {
+        const limit = Number(command[5]);
+        const count = (counts.get(key) ?? 0) + 1;
+        counts.set(key, count);
+        return Response.json({ result: count > limit ? 0 : 1 });
+      }
       const next = command[4] ?? '';
       const current = saved.get(key);
       if (current === undefined) return Response.json({ result: 'missing' });
@@ -148,6 +158,10 @@ function fakeRedis(): FakeRedis {
       if (parsed.status !== 'pending') return Response.json({ result: 'not_pending' });
       saved.set(key, next);
       return Response.json({ result: 'updated' });
+    }
+    if (op === 'DEL') {
+      saved.delete(command[1] ?? '');
+      return Response.json({ result: 1 });
     }
     return Response.json({ error: 'bad command' }, { status: 200 });
   };
@@ -158,7 +172,7 @@ function replyRequest(jobId: string, body: { reply: string }): Request {
   return new Request('https://mcp.example/api/reply', {
     method: 'POST',
     headers: {
-      authorization: 'Bearer reply-secret',
+      authorization: 'Bearer reply-secret-value',
       'content-type': 'application/json',
     },
     body: JSON.stringify({ job_id: jobId, ...body }),
@@ -176,6 +190,9 @@ function fakeKv(): KvBinding & { ttls: Map<string, number | undefined> } {
     async put(key, value, options) {
       values.set(key, value);
       ttls.set(key, options?.expirationTtl);
+    },
+    async delete(key) {
+      values.delete(key);
     },
   };
 }

@@ -29,6 +29,7 @@ export const WORKER_ENV_KEYS = [
   'UPSTASH_REDIS_REST_TOKEN',
   'KV_REST_API_URL',
   'KV_REST_API_TOKEN',
+  'WEBHOOK_HOST_ALLOWLIST',
 ] as const;
 
 export type WorkerEnvKey = (typeof WORKER_ENV_KEYS)[number];

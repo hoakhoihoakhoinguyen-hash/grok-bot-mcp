@@ -13,6 +13,7 @@ const app = createApp({
   config: runtime.config,
   store: runtime.selection.store,
   log: runtime.log,
+  runtime: 'local',
 });
 
 const port = portFrom(process.env.PORT);

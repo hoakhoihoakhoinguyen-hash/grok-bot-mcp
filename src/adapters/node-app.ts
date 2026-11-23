@@ -11,7 +11,12 @@ export function getNodeApp(): App {
     );
   }
   const runtime = loadRuntime(process.env);
-  app = createApp({ config: runtime.config, store: runtime.selection.store, log: runtime.log });
+  app = createApp({
+    config: runtime.config,
+    store: runtime.selection.store,
+    log: runtime.log,
+    runtime: 'live',
+  });
   return app;
 }
 

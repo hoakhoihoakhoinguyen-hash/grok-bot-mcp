@@ -5,7 +5,7 @@ import { createApp, type App } from '../src/core/app';
 import { configFromEnv, type EnvMap } from '../src/core/config';
 import { createLogger } from '../src/core/log';
 import { MemoryJobStore } from '../src/core/memory-store';
-import type { AppConfig, AppDeps, LogFn } from '../src/core/types';
+import type { AppConfig, AppDeps, JobStore, LogFn, RuntimeMode } from '../src/core/types';
 
 export const CLAUDE_SECRET = 'claude-test-secret';
 export const CURSOR_SECRET = 'cursor-test-secret';
@@ -15,7 +15,7 @@ export const WEBHOOK_URL = 'https://bot.example/webhook';
 
 export interface TestApp {
   app: App;
-  store: MemoryJobStore;
+  store: JobStore;
   logs: string[];
   log: LogFn;
   config: AppConfig;
@@ -28,9 +28,11 @@ export function testApp(options?: {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   config?: Partial<AppConfig>;
+  store?: JobStore;
+  runtime?: RuntimeMode;
 }): TestApp {
   const now = options?.now ?? (() => Date.now());
-  const store = new MemoryJobStore(now);
+  const store = options?.store ?? new MemoryJobStore(now);
   const logs: string[] = [];
   const log = createLogger((line) => {
     logs.push(line);
@@ -42,7 +44,8 @@ export function testApp(options?: {
       REPLY_SECRET,
       MCP_API_KEY: `claude:${CLAUDE_SECRET},cursor:${CURSOR_SECRET}`,
       PUBLIC_BASE_URL: 'https://mcp.example',
-      WAIT_SECONDS: '25',
+      WEBHOOK_HOST_ALLOWLIST: 'bot.example',
+      WAIT_SECONDS: '0',
       ...options?.env,
     }),
     ...options?.config,
@@ -50,6 +53,7 @@ export function testApp(options?: {
   const deps: AppDeps = {
     config,
     store,
+    runtime: options?.runtime,
     fetchImpl: options?.fetchImpl,
     now,
     sleep: options?.sleep,
@@ -81,8 +85,9 @@ export async function callTool(
   args: Record<string, unknown>,
   token = CLAUDE_SECRET,
   era: 'legacy' | 'modern' = 'legacy',
+  path = '/api/mcp',
 ): Promise<{ status: number; rpc: JsonRpc; text: string }> {
-  const response = await rpc(app, 'tools/call', { name, arguments: args }, token, era);
+  const response = await rpc(app, 'tools/call', { name, arguments: args }, token, era, path);
   return response;
 }
 
@@ -92,6 +97,7 @@ export async function rpc(
   params: Record<string, unknown>,
   token = CLAUDE_SECRET,
   era: 'legacy' | 'modern' = 'legacy',
+  path = '/api/mcp',
 ): Promise<{ status: number; rpc: JsonRpc; text: string }> {
   const modern = era === 'modern';
   const bodyParams = modern
@@ -113,7 +119,7 @@ export async function rpc(
     headers['mcp-method'] = method;
     if (method === 'tools/call' && typeof params.name === 'string') headers['mcp-name'] = params.name;
   }
-  const posted = await postJson(app, '/api/mcp', { jsonrpc: '2.0', id: 1, method, params: bodyParams }, headers);
+  const posted = await postJson(app, path, { jsonrpc: '2.0', id: 1, method, params: bodyParams }, headers);
   return { status: posted.status, text: posted.text, rpc: posted.json as JsonRpc };
 }
 
